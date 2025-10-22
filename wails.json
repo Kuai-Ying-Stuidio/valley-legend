@@ -1,0 +1,14 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Legend-Of-Tianji-Valley",
+  "outputfilename": "Legend-Valley-I",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Kuai-Ying Studio",
+    "email": "1na-bsftklqsx2@dingtalk.com"
+  },
+  "frontend:dir": "./frontend"
+}
