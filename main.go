@@ -13,6 +13,7 @@ var assets embed.FS
 
 func main() {
 	// Create an instance of the app structure
+	saveManager := NewSaveManager()
 	app := NewApp()
 
 	// Create application with options
@@ -27,6 +28,7 @@ func main() {
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,
+			saveManager,
 		},
 	})
 

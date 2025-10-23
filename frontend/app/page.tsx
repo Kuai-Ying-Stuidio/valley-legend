@@ -13,6 +13,24 @@ import { getLocalizedChapterContent } from "@/lib/storyline-translations";
 import { LanguageToggle } from "@/components/language-toggle";
 import { useLanguage } from "@/lib/language";
 
+// Wails runtime imports
+declare global {
+  interface Window {
+    go?: {
+      main?: {
+        SaveManager?: {
+          SaveGame: (saveName: string, saveData: string) => Promise<void>;
+          LoadGame: (saveName: string) => Promise<string>;
+          GetAllSaves: () => Promise<string[]>;
+          SetLastSave: (saveName: string) => Promise<void>;
+          GetLastSave: () => Promise<string>;
+          DeleteSave: (saveName: string) => Promise<void>;
+        };
+      };
+    };
+  }
+}
+
 type BlueprintCategory = "tools" | "items";
 type NavigationPanel = "resources" | "facilities" | "council" | "crafting" | "story" | "citizens" | "settings";
 
@@ -70,6 +88,7 @@ type District = {
   buildingCount: number;
   expansionCost: ResourceDelta;
   productionBoost: Partial<Record<ResourceKey, number>>;
+  resourceTag?: ResourceKey;
 };
 
 type Recipe = {
@@ -155,12 +174,12 @@ const INITIAL_SKILLS: Skill[] = [
 ];
 
 const INITIAL_RESOURCES: Resource[] = [
-  { key: "sunleaf", label: "Sunleaf", labelZh: "向日叶", amount: 0, rate: 2.4, capacity: 40, icon: Leaf },
-  { key: "wood", label: "Timber", labelZh: "木材", amount: 0, rate: 0.6, capacity: 40, icon: Hammer },
+  { key: "sunleaf", label: "Sunleaf", labelZh: "向日叶", amount: 0, rate: 0, capacity: 40, icon: Leaf },
+  { key: "wood", label: "Timber", labelZh: "木材", amount: 0, rate: 0, capacity: 40, icon: Hammer },
   { key: "stone", label: "Stone", labelZh: "石料", amount: 0, rate: 0, capacity: 30, icon: Mountain },
   { key: "science", label: "Insight", labelZh: "灵感", amount: 0, rate: 0, capacity: 25, icon: Brain },
-  { key: "energy", label: "Ember", labelZh: "余烬", amount: 10, rate: 0.2, capacity: 20, icon: Flame },
-  { key: "execution", label: "Execution", labelZh: "执行力", amount: 5, rate: 0.05, capacity: 10, icon: Sparkles },
+  { key: "energy", label: "Ember", labelZh: "余烬", amount: 0, rate: 0, capacity: 20, icon: Flame },
+  { key: "execution", label: "Execution", labelZh: "执行力", amount: 0, rate: 0, capacity: 10, icon: Sparkles },
 ];
 
 const RECIPES: Recipe[] = [
@@ -464,6 +483,23 @@ const DISTRICTS: District[] = [
     buildingCount: 0,
     expansionCost: { sunleaf: -10, wood: -5 },
     productionBoost: { sunleaf: 0.5 },
+    resourceTag: "sunleaf",
+  },
+  {
+    id: "lumber-groves",
+    title: "Lumber Groves",
+    titleZh: "林场营地",
+    focus: "Harvest",
+    focusZh: "采伐",
+    description: "Timber crews tend coppiced groves for steady beams.",
+    descriptionZh: "伐木队管理复萌林，源源不断提供梁木。",
+    progress: 0,
+    stability: 0,
+    requiredStage: 0,
+    buildingCount: 0,
+    expansionCost: { sunleaf: -30, wood: -10 },
+    productionBoost: { wood: 1.5 },
+    resourceTag: "wood",
   },
   {
     id: "aurora-forge",
@@ -598,13 +634,44 @@ const DAYS_PER_YEAR = 365;
 const SUNLEAF_SEASON_MULTIPLIERS = [1.2, 1.2, 0.8, 0.5];
 const WAGE_PER_TENANT_PER_DAY = 5;
 
-const RESOURCE_UNLOCK_STAGE: Record<ResourceKey, number> = {
-  sunleaf: 0,
-  wood: 0,
-  stone: 1,
-  science: 1,
-  energy: 2,
-  execution: 0,
+type ResourceUnlockInfo = {
+  stage: number | null;
+  cost?: ResourceDelta;
+  costLabel?: string;
+  costLabelZh?: string;
+  log?: string;
+  logZh?: string;
+};
+
+const RESOURCE_UNLOCK_DATA: Record<ResourceKey, ResourceUnlockInfo> = {
+  sunleaf: {
+    stage: 0,
+  },
+  wood: {
+    stage: null,
+    cost: { sunleaf: -40 },
+    costLabel: "Spend 40 sunleaf",
+    costLabelZh: "消耗 40 份向日叶",
+    log: "Landlord unlocks the timber ledger after receiving 40 sunleaf.",
+    logZh: "缴纳 40 份向日叶后，房东开放木材账册。",
+  },
+  stone: {
+    stage: 1,
+  },
+  science: {
+    stage: 1,
+  },
+  energy: {
+    stage: 2,
+  },
+  execution: {
+    stage: null,
+    cost: { wood: -30 },
+    costLabel: "Spend 30 timber",
+    costLabelZh: "消耗 30 单位木材",
+    log: "Landlord grants execution authority after a timber tribute.",
+    logZh: "缴纳 30 单位木材后，房东准许动用执行力。",
+  },
 };
 
 type TutorialGoal = {
@@ -633,20 +700,14 @@ const TUTORIAL_STAGES: TutorialStage[] = [
     title: "Move-In Night",
     titleZh: "搬迁之夜",
     cycleDeadline: 20,
-    intro: "The landlord pounds on the door, demanding tidy stacks of sunleaf and timber before signing off",
-    introZh: "房东敲门催促，要求在签字前先把向日叶与木材堆得整整齐齐",
+    intro: "The landlord pounds on the door, demanding tidy stacks of sunleaf before signing off",
+    introZh: "房东要求在签字前先把向日叶堆得整整齐齐",
     goals: [
       {
         resource: "sunleaf",
-        target: 10,
-        label: "Tie up 10 bundles of sunleaf to reassure the landlord",
-        labelZh: "捆好 10 份向日叶使房东放心",
-      },
-      {
-        resource: "wood",
-        target: 10,
-        label: "Prepare 10 wooden beams for the landlord's inspection",
-        labelZh: "准备 10 根木梁供房东验收",
+        target: 20,
+        label: "Tie up 20 bundles of sunleaf to reassure the landlord",
+        labelZh: "捆好 20 份向日叶使房东放心",
       },
     ],
     unlocks: [
@@ -785,9 +846,14 @@ export default function Home() {
   const [completedPurchases, setCompletedPurchases] = useState<string[]>([]);
   const [purchaseCounts, setPurchaseCounts] = useState<Record<string, number>>({});
   const [civilizationLevel, setCivilizationLevel] = useState(0);
-  const [saveModalOpen, setSaveModalOpen] = useState(false);
-  const [saveString, setSaveString] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
+  const [gameState, setGameState] = useState<'main-menu' | 'playing' | 'paused'>('main-menu');
+  const [currentSaveName, setCurrentSaveName] = useState<string>("");
+  const [showNewGameDialog, setShowNewGameDialog] = useState(false);
+  const [newGameName, setNewGameName] = useState("");
+  const [showAboutDialog, setShowAboutDialog] = useState(false);
+  const [showSaveListDialog, setShowSaveListDialog] = useState(false);
+  const [hasLastSave, setHasLastSave] = useState(false);
+  const [availableSaves, setAvailableSaves] = useState<string[]>([]);
   const [showIntroDialogue, setShowIntroDialogue] = useState(true);
   const [introIndex, setIntroIndex] = useState(0);
   const [districts, setDistricts] = useState<District[]>(DISTRICTS);
@@ -835,6 +901,7 @@ export default function Home() {
     energy: 0,
     execution: 0,
   });
+  const [manuallyUnlockedResources, setManuallyUnlockedResources] = useState<ResourceKey[]>([]);
   const [activeBoosts, setActiveBoosts] = useState<Array<{
     actionId: string;
     label: string;
@@ -855,6 +922,221 @@ export default function Home() {
       window.clearInterval(id);
     };
   }, [showIntroDialogue]);
+
+  const saveGame = useCallback(async (saveName: string) => {
+    if (typeof window === 'undefined') return;
+    const payload = {
+      version: 1,
+      resources,
+      tick,
+      stageIndex,
+      showTutorial,
+      showIntroDialogue,
+      introIndex,
+      unlockedChapters,
+      activeChapterId,
+      milestones,
+      completedPurchases,
+      purchaseCounts,
+      civilizationLevel,
+      manualCooldowns,
+      manualHarvestActive,
+      log,
+      language,
+      districts,
+      craftingRecipe,
+      craftingProgress,
+      equippedTools,
+      facilityCounts,
+      selectedFacilityId,
+      tenantRecruitCooldown,
+      pendingTenants,
+      tenantTimeout,
+      assignedTenants,
+      tenantMorale,
+      autoPayWages,
+      lastPayDay,
+      skills,
+      resourceWorkers,
+      manuallyUnlockedResources,
+    };
+    const saveData = JSON.stringify(payload);
+    
+    try {
+      if (window.go?.main?.SaveManager) {
+        // Use Wails API
+        await window.go.main.SaveManager.SaveGame(saveName, saveData);
+        await window.go.main.SaveManager.SetLastSave(saveName);
+      } else {
+        // Fallback to localStorage for development
+        localStorage.setItem(`save_${saveName}`, saveData);
+        localStorage.setItem('lastSaveName', saveName);
+      }
+    } catch (error) {
+      console.error('Failed to save game:', error);
+    }
+  }, [resources, tick, stageIndex, showTutorial, showIntroDialogue, introIndex, unlockedChapters, activeChapterId, milestones, completedPurchases, purchaseCounts, civilizationLevel, manualCooldowns, manualHarvestActive, log, language, districts, craftingRecipe, craftingProgress, equippedTools, facilityCounts, selectedFacilityId, tenantRecruitCooldown, pendingTenants, tenantTimeout, assignedTenants, tenantMorale, autoPayWages, lastPayDay, skills, resourceWorkers, manuallyUnlockedResources]);
+
+  const loadGame = useCallback(async (saveName: string) => {
+    if (typeof window === 'undefined') return false;
+    
+    let saveData: string | null = null;
+    
+    try {
+      if (window.go?.main?.SaveManager) {
+        // Use Wails API
+        saveData = await window.go.main.SaveManager.LoadGame(saveName);
+      } else {
+        // Fallback to localStorage for development
+        saveData = localStorage.getItem(`save_${saveName}`);
+      }
+    } catch (error) {
+      console.error('Failed to load game:', error);
+      return false;
+    }
+    
+    if (!saveData) {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(saveData);
+      if (!parsed || typeof parsed !== "object") {
+        return false;
+      }
+      if (Array.isArray(parsed.resources)) {
+        setResources(
+          INITIAL_RESOURCES.map((resource) => {
+            const incoming = parsed.resources.find((item: Resource) => item?.key === resource.key);
+            if (!incoming) {
+              return resource;
+            }
+            return {
+              ...resource,
+              amount: typeof incoming.amount === "number" ? incoming.amount : resource.amount,
+              rate: typeof incoming.rate === "number" ? incoming.rate : resource.rate,
+              capacity: typeof incoming.capacity === "number" ? incoming.capacity : resource.capacity,
+            };
+          }),
+        );
+      } else {
+        setResources(INITIAL_RESOURCES);
+      }
+      setTick(typeof parsed.tick === "number" ? parsed.tick : 0);
+      setStageIndex(typeof parsed.stageIndex === "number" ? parsed.stageIndex : 0);
+      setShowTutorial(Boolean(parsed.showTutorial));
+      setShowIntroDialogue(Boolean(parsed.showIntroDialogue));
+      setIntroIndex(typeof parsed.introIndex === "number" ? parsed.introIndex : 0);
+      setUnlockedChapters(Array.isArray(parsed.unlockedChapters) ? parsed.unlockedChapters : []);
+      setActiveChapterId(typeof parsed.activeChapterId === "string" ? parsed.activeChapterId : initialChapterId);
+      setMilestones(Array.isArray(parsed.milestones) ? parsed.milestones : []);
+      setCompletedPurchases(Array.isArray(parsed.completedPurchases) ? parsed.completedPurchases : []);
+      setPurchaseCounts(typeof parsed.purchaseCounts === "object" && parsed.purchaseCounts ? parsed.purchaseCounts : {});
+      setCivilizationLevel(typeof parsed.civilizationLevel === "number" ? parsed.civilizationLevel : 0);
+      if (parsed.manualCooldowns && typeof parsed.manualCooldowns === "object") {
+        setManualCooldowns(parsed.manualCooldowns);
+      }
+      if (parsed.manualHarvestActive && typeof parsed.manualHarvestActive === "object") {
+        setManualHarvestActive(parsed.manualHarvestActive);
+      }
+      setLog(Array.isArray(parsed.log) ? parsed.log.slice(0, 6) : localizedDefaults);
+      if (Array.isArray(parsed.districts)) {
+        setDistricts(
+          DISTRICTS.map((district) => {
+            const incoming = parsed.districts.find((item: District) => item?.id === district.id);
+            if (!incoming) {
+              return district;
+            }
+            return {
+              ...district,
+              buildingCount: typeof incoming.buildingCount === "number" ? incoming.buildingCount : 0,
+              progress: typeof incoming.progress === "number" ? incoming.progress : 0,
+              stability: typeof incoming.stability === "number" ? incoming.stability : 0,
+            };
+          }),
+        );
+      } else {
+        setDistricts(DISTRICTS);
+      }
+      setCraftingRecipe(typeof parsed.craftingRecipe === "string" ? parsed.craftingRecipe : null);
+      if (parsed.craftingProgress !== undefined) {
+        setCraftingProgress(typeof parsed.craftingProgress === "number" ? parsed.craftingProgress : 0);
+      }
+      if (parsed.equippedTools && typeof parsed.equippedTools === "object") {
+        setEquippedTools(parsed.equippedTools);
+      }
+      if (parsed.facilityCounts && typeof parsed.facilityCounts === "object") {
+        setFacilityCounts(parsed.facilityCounts);
+      }
+      if (typeof parsed.selectedFacilityId === "string") {
+        setSelectedFacilityId(parsed.selectedFacilityId);
+      }
+      if (typeof parsed.tenantRecruitCooldown === "number") {
+        setTenantRecruitCooldown(parsed.tenantRecruitCooldown);
+      }
+      if (typeof parsed.pendingTenants === "number") {
+        setPendingTenants(parsed.pendingTenants);
+      }
+      if (typeof parsed.tenantTimeout === "number") {
+        setTenantTimeout(parsed.tenantTimeout);
+      }
+      if (typeof parsed.assignedTenants === "number") {
+        setAssignedTenants(parsed.assignedTenants);
+      }
+      if (typeof parsed.tenantMorale === "number") {
+        setTenantMorale(parsed.tenantMorale);
+      }
+      if (typeof parsed.autoPayWages === "boolean") {
+        setAutoPayWages(parsed.autoPayWages);
+      }
+      if (typeof parsed.lastPayDay === "number") {
+        setLastPayDay(parsed.lastPayDay);
+      }
+      if (Array.isArray(parsed.skills)) {
+        setSkills(parsed.skills);
+      } else {
+        setSkills(INITIAL_SKILLS);
+      }
+      if (parsed.resourceWorkers && typeof parsed.resourceWorkers === "object") {
+        setResourceWorkers({
+          sunleaf: typeof parsed.resourceWorkers.sunleaf === "number" ? parsed.resourceWorkers.sunleaf : 0,
+          wood: typeof parsed.resourceWorkers.wood === "number" ? parsed.resourceWorkers.wood : 0,
+          stone: typeof parsed.resourceWorkers.stone === "number" ? parsed.resourceWorkers.stone : 0,
+          science: typeof parsed.resourceWorkers.science === "number" ? parsed.resourceWorkers.science : 0,
+          energy: typeof parsed.resourceWorkers.energy === "number" ? parsed.resourceWorkers.energy : 0,
+          execution: typeof parsed.resourceWorkers.execution === "number" ? parsed.resourceWorkers.execution : 0,
+        });
+      } else {
+        setResourceWorkers({
+          sunleaf: 0,
+          wood: 0,
+          stone: 0,
+          science: 0,
+          energy: 0,
+          execution: 0,
+        });
+      }
+      if (Array.isArray(parsed.manuallyUnlockedResources)) {
+        setManuallyUnlockedResources(parsed.manuallyUnlockedResources);
+      }
+      setCurrentSaveName(saveName);
+      
+      // Set last save
+      try {
+        if (window.go?.main?.SaveManager) {
+          await window.go.main.SaveManager.SetLastSave(saveName);
+        } else {
+          localStorage.setItem('lastSaveName', saveName);
+        }
+      } catch (error) {
+        console.error('Failed to set last save:', error);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  }, [initialChapterId, localizedDefaults]);
 
   const serializeState = useCallback(() => {
     const payload = {
@@ -890,9 +1172,10 @@ export default function Home() {
       lastPayDay,
       skills,
       resourceWorkers,
+      manuallyUnlockedResources,
     };
     return JSON.stringify(payload);
-  }, [resources, tick, stageIndex, showTutorial, showIntroDialogue, introIndex, unlockedChapters, activeChapterId, milestones, completedPurchases, purchaseCounts, civilizationLevel, manualCooldowns, manualHarvestActive, log, language, districts, craftingRecipe, craftingProgress, equippedTools, facilityCounts, selectedFacilityId, tenantRecruitCooldown, pendingTenants, tenantTimeout, assignedTenants, tenantMorale, autoPayWages, lastPayDay, skills, resourceWorkers]);
+  }, [resources, tick, stageIndex, showTutorial, showIntroDialogue, introIndex, unlockedChapters, activeChapterId, milestones, completedPurchases, purchaseCounts, civilizationLevel, manualCooldowns, manualHarvestActive, log, language, districts, craftingRecipe, craftingProgress, equippedTools, facilityCounts, selectedFacilityId, tenantRecruitCooldown, pendingTenants, tenantTimeout, assignedTenants, tenantMorale, autoPayWages, lastPayDay, skills, resourceWorkers, manuallyUnlockedResources]);
 
   const deserializeState = useCallback(
     (json: string) => {
@@ -1013,9 +1296,11 @@ export default function Home() {
             execution: 0,
           });
         }
+        if (Array.isArray(parsed.manuallyUnlockedResources)) {
+          setManuallyUnlockedResources(parsed.manuallyUnlockedResources);
+        }
       } catch (error) {
         console.error(error);
-        setImportError(language === "zh" ? "导入失败：存档数据无效。" : "Import failed: invalid save data.");
       }
     },
     [initialChapterId, localizedDefaults, language],
@@ -1084,7 +1369,7 @@ export default function Home() {
     return rates;
   }, [districts]);
   const baseSunleafRate = useMemo(
-    () => INITIAL_RESOURCES.find((resource) => resource.key === "sunleaf")?.rate ?? 1,
+    () => INITIAL_RESOURCES.find((resource) => resource.key === "sunleaf")?.rate ?? 0,
     [],
   );
   const sunleafMultiplier = useMemo(
@@ -1468,14 +1753,36 @@ export default function Home() {
     } as const;
   }, [language, yearLabel]);
 
-  const unlockedResources = useMemo(
-    () => resources.filter((resource) => stageIndex >= RESOURCE_UNLOCK_STAGE[resource.key]),
-    [resources, stageIndex],
-  );
-  const lockedResources = useMemo(
-    () => resources.filter((resource) => stageIndex < RESOURCE_UNLOCK_STAGE[resource.key]),
-    [resources, stageIndex],
-  );
+  const unlockedResources = useMemo(() => {
+    return resources.filter((resource) => {
+      const info = RESOURCE_UNLOCK_DATA[resource.key];
+      if (!info) {
+        return true;
+      }
+      if (info.stage != null && stageIndex >= info.stage) {
+        return true;
+      }
+      if (manuallyUnlockedResources.includes(resource.key)) {
+        return true;
+      }
+      return false;
+    });
+  }, [resources, stageIndex, manuallyUnlockedResources]);
+  const lockedResources = useMemo(() => {
+    return resources.filter((resource) => {
+      const info = RESOURCE_UNLOCK_DATA[resource.key];
+      if (!info) {
+        return false;
+      }
+      if (info.stage != null && stageIndex >= info.stage) {
+        return false;
+      }
+      if (manuallyUnlockedResources.includes(resource.key)) {
+        return false;
+      }
+      return true;
+    });
+  }, [resources, stageIndex, manuallyUnlockedResources]);
 
   const unlockedDistricts = useMemo(
     () => districts.filter((district) => stageIndex >= district.requiredStage),
@@ -1552,37 +1859,6 @@ export default function Home() {
     [resources],
   );
 
-  const handleExportSave = useCallback(() => {
-    const serialized = serializeState();
-    setSaveString(serialized);
-    setSaveModalOpen(true);
-  }, [serializeState]);
-
-  const handleCopySave = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(saveString);
-    } catch (error) {
-      console.error(error);
-    }
-  }, [saveString]);
-
-  const handleImportChange = useCallback(
-    (event: ChangeEvent<HTMLTextAreaElement>) => {
-      setSaveString(event.target.value);
-    },
-    [],
-  );
-
-  const handleImportApply = useCallback(() => {
-    if (!saveString.trim()) {
-      return;
-    }
-    try {
-      deserializeState(saveString);
-    } catch (error) {
-      console.error(error);
-    }
-  }, [deserializeState, saveString]);
 
   const applyResourceDelta = useCallback(
     (list: Resource[], delta: ResourceDelta) =>
@@ -1659,6 +1935,29 @@ export default function Home() {
       };
     },
     [equippedTools],
+  );
+
+  const handleUnlockResource = useCallback(
+    (resourceKey: ResourceKey) => {
+      const unlockInfo = RESOURCE_UNLOCK_DATA[resourceKey];
+      if (!unlockInfo || !unlockInfo.cost) {
+        return;
+      }
+      const canAfford = resources.every((resource) => {
+        const cost = unlockInfo.cost?.[resource.key] ?? 0;
+        return resource.amount + cost >= 0;
+      });
+      if (!canAfford) {
+        return;
+      }
+      setResources((prev) => applyResourceDelta(prev, unlockInfo.cost!));
+      setManuallyUnlockedResources((prev) => [...prev, resourceKey]);
+      const logEntry = language === "zh" ? unlockInfo.logZh : unlockInfo.log;
+      if (logEntry) {
+        setLog((prev) => [logEntry, ...prev].slice(0, 6));
+      }
+    },
+    [resources, language, applyResourceDelta],
   );
 
   const handleManualHarvest = useCallback(
@@ -2296,6 +2595,167 @@ export default function Home() {
     [resources],
   );
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && gameState === 'playing') {
+        setGameState('paused');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState]);
+
+  useEffect(() => {
+    const checkLastSave = async () => {
+      if (typeof window === 'undefined') return;
+      
+      try {
+        let lastSave: string | null = null;
+        
+        if (window.go?.main?.SaveManager) {
+          lastSave = await window.go.main.SaveManager.GetLastSave();
+        } else {
+          lastSave = localStorage.getItem('lastSaveName');
+        }
+        
+        setHasLastSave(Boolean(lastSave));
+      } catch (error) {
+        console.error('Failed to check last save:', error);
+        setHasLastSave(false);
+      }
+    };
+    
+    checkLastSave();
+  }, [gameState]);
+
+  useEffect(() => {
+    const loadSaves = async () => {
+      if (!showSaveListDialog || typeof window === 'undefined') return;
+      
+      try {
+        if (window.go?.main?.SaveManager) {
+          const saves = await window.go.main.SaveManager.GetAllSaves();
+          setAvailableSaves(saves.sort());
+        } else {
+          const saves: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('save_')) {
+              saves.push(key.replace('save_', ''));
+            }
+          }
+          setAvailableSaves(saves.sort());
+        }
+      } catch (error) {
+        console.error('Failed to get saves:', error);
+        setAvailableSaves([]);
+      }
+    };
+    
+    loadSaves();
+  }, [showSaveListDialog]);
+
+  const handleNewGame = useCallback(() => {
+    if (!newGameName.trim()) {
+      return;
+    }
+    setResources(INITIAL_RESOURCES);
+    setTick(0);
+    setStageIndex(0);
+    setShowTutorial(false);
+    setShowIntroDialogue(true);
+    setIntroIndex(0);
+    setUnlockedChapters(initialChapterId ? [initialChapterId] : []);
+    setActiveChapterId(initialChapterId);
+    setMilestones([]);
+    setCompletedPurchases([]);
+    setPurchaseCounts({});
+    setCivilizationLevel(0);
+    setManualCooldowns({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0 });
+    setManualHarvestActive({ sunleaf: false, wood: false, stone: false, science: false, energy: false, execution: false });
+    setLog(localizedDefaults);
+    setDistricts(DISTRICTS);
+    setCraftingRecipe(null);
+    setCraftingProgress(0);
+    setEquippedTools({});
+    setFacilityCounts(INITIAL_FACILITY_COUNTS);
+    setSelectedFacilityId(null);
+    setTenantRecruitCooldown(0);
+    setPendingTenants(0);
+    setTenantTimeout(0);
+    setAssignedTenants(0);
+    setTenantMorale([]);
+    setAutoPayWages(false);
+    setLastPayDay(0);
+    setSkills(INITIAL_SKILLS);
+    setResourceWorkers({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0 });
+    setManuallyUnlockedResources([]);
+    setCurrentSaveName(newGameName.trim());
+    saveGame(newGameName.trim());
+    setGameState('playing');
+    setShowNewGameDialog(false);
+    setNewGameName("");
+  }, [newGameName, initialChapterId, localizedDefaults, saveGame]);
+
+  const getAllSaves = useCallback(async () => {
+    if (typeof window === 'undefined') return [];
+    
+    try {
+      if (window.go?.main?.SaveManager) {
+        // Use Wails API
+        const saves = await window.go.main.SaveManager.GetAllSaves();
+        return saves.sort();
+      } else {
+        // Fallback to localStorage for development
+        const saves: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('save_')) {
+            saves.push(key.replace('save_', ''));
+          }
+        }
+        return saves.sort();
+      }
+    } catch (error) {
+      console.error('Failed to get saves:', error);
+      return [];
+    }
+  }, []);
+
+  const handleContinueGame = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      let lastSave: string | null = null;
+      
+      if (window.go?.main?.SaveManager) {
+        lastSave = await window.go.main.SaveManager.GetLastSave();
+      } else {
+        lastSave = localStorage.getItem('lastSaveName');
+      }
+      
+      if (lastSave && await loadGame(lastSave)) {
+        setGameState('playing');
+      }
+    } catch (error) {
+      console.error('Failed to continue game:', error);
+    }
+  }, [loadGame]);
+
+  const handleLoadSelectedSave = useCallback(async (saveName: string) => {
+    if (await loadGame(saveName)) {
+      setGameState('playing');
+      setShowSaveListDialog(false);
+    }
+  }, [loadGame]);
+
+  const handleSaveAndExit = useCallback(() => {
+    if (currentSaveName) {
+      saveGame(currentSaveName);
+    }
+    setGameState('main-menu');
+  }, [currentSaveName, saveGame]);
+
   const handleAction = (action: Action) => {
     if (!canExecute(action)) {
       return;
@@ -2332,10 +2792,211 @@ export default function Home() {
     setLog((prev) => [entry, ...prev].slice(0, 6));
   };
 
+  if (gameState === 'main-menu') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background/90 to-primary/10">
+        <div className="w-full max-w-md space-y-6 p-6">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold tracking-tight">{language === "zh" ? "天机谷传奇" : "Valley Legend"}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">{language === "zh" ? "欢迎回到山谷" : "Welcome to the Valley"}</p>
+          </div>
+          <div className="space-y-3">
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => setShowNewGameDialog(true)}
+              type="button"
+            >
+              {language === "zh" ? "新游戏" : "New Game"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              disabled={!hasLastSave}
+              onClick={handleContinueGame}
+              type="button"
+            >
+              {language === "zh" ? "继续游戏" : "Continue"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => setShowSaveListDialog(true)}
+              type="button"
+            >
+              {language === "zh" ? "选择存档" : "Select Save"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => {}}
+              type="button"
+            >
+              {language === "zh" ? "设置" : "Settings"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => setShowAboutDialog(true)}
+              type="button"
+            >
+              {language === "zh" ? "关于" : "About"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={() => window.close()}
+              type="button"
+            >
+              {language === "zh" ? "退出" : "Exit"}
+            </Button>
+          </div>
+        </div>
+        {showNewGameDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur">
+            <div className="w-full max-w-md rounded-3xl border border-border/60 bg-card/95 p-6 shadow-xl">
+              <h2 className="text-lg font-semibold">{language === "zh" ? "新游戏" : "New Game"}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {language === "zh" ? "请输入存档名称" : "Enter save name"}
+              </p>
+              <input
+                type="text"
+                className="mt-4 w-full rounded-lg border border-border bg-background px-4 py-2"
+                placeholder={language === "zh" ? "存档名称" : "Save name"}
+                value={newGameName}
+                onChange={(e) => setNewGameName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleNewGame();
+                  }
+                }}
+              />
+              <div className="mt-6 flex gap-3">
+                <Button
+                  className="flex-1"
+                  onClick={handleNewGame}
+                  disabled={!newGameName.trim()}
+                  type="button"
+                >
+                  {language === "zh" ? "开始" : "Start"}
+                </Button>
+                <Button
+                  className="flex-1"
+                  variant="outline"
+                  onClick={() => {
+                    setShowNewGameDialog(false);
+                    setNewGameName("");
+                  }}
+                  type="button"
+                >
+                  {language === "zh" ? "取消" : "Cancel"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showSaveListDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur">
+            <div className="w-full max-w-md rounded-3xl border border-border/60 bg-card/95 p-6 shadow-xl">
+              <h2 className="text-lg font-semibold">{language === "zh" ? "选择存档" : "Select Save"}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {language === "zh" ? "选择要加载的存档" : "Choose a save to load"}
+              </p>
+              <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
+                {availableSaves.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {language === "zh" ? "暂无存档" : "No saves found"}
+                  </p>
+                ) : (
+                  availableSaves.map((saveName) => (
+                    <button
+                      key={saveName}
+                      className="w-full rounded-lg border border-border bg-background/60 px-4 py-3 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                      onClick={() => handleLoadSelectedSave(saveName)}
+                    >
+                      <p className="text-sm font-semibold">{saveName}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {language === "zh" ? "点击加载" : "Click to load"}
+                      </p>
+                    </button>
+                  ))
+                )}
+              </div>
+              <Button
+                className="mt-6 w-full"
+                variant="outline"
+                onClick={() => setShowSaveListDialog(false)}
+                type="button"
+              >
+                {language === "zh" ? "取消" : "Cancel"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {showAboutDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur">
+            <div className="w-full max-w-md rounded-3xl border border-border/60 bg-card/95 p-6 shadow-xl">
+              <h2 className="text-lg font-semibold">{language === "zh" ? "关于" : "About"}</h2>
+              <p className="mt-4 text-sm text-muted-foreground">
+                {language === "zh" ? "天机谷传奇" : "Valley Legend"}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {language === "zh" ? "版本 1.0.0" : "Version 1.0.0"}
+              </p>
+              <Button
+                className="mt-6 w-full"
+                onClick={() => setShowAboutDialog(false)}
+                type="button"
+              >
+                {language === "zh" ? "关闭" : "Close"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (gameState === 'paused') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background/90 to-primary/10">
+        <div className="w-full max-w-md space-y-6 p-6">
+          <div className="text-center">
+            <h1 className="text-2xl font-bold tracking-tight">{language === "zh" ? "游戏暂停" : "Game Paused"}</h1>
+          </div>
+          <div className="space-y-3">
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => setGameState('playing')}
+              type="button"
+            >
+              {language === "zh" ? "继续游戏" : "Continue"}
+            </Button>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              onClick={handleSaveAndExit}
+              type="button"
+            >
+              {language === "zh" ? "保存并退出" : "Save & Exit"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background/90 to-primary/10">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-10">
-        {showIntroDialogue ? (
+        {showIntroDialogue && gameState === 'playing' ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur">
             <div className="w-full max-w-lg rounded-3xl border border-border/60 bg-card/95 p-6 shadow-xl">
               <div className="flex items-start justify-between gap-4">
@@ -2899,10 +3560,24 @@ export default function Home() {
                       );
                     })}
                     {lockedResources.map((resource) => {
+                      const unlockInfo = RESOURCE_UNLOCK_DATA[resource.key];
+                      const stageRequirement = unlockInfo?.stage;
+                      const hasCostUnlock = unlockInfo?.cost != null;
+                      const canAffordUnlock = hasCostUnlock && resources.every((r) => {
+                        const cost = unlockInfo.cost?.[r.key] ?? 0;
+                        return r.amount + cost >= 0;
+                      });
+                      const unlockDescription = stageRequirement != null
+                        ? language === "zh"
+                          ? languageLabels.districtLocked(TUTORIAL_STAGES[stageRequirement].titleZh)
+                          : languageLabels.districtLocked(TUTORIAL_STAGES[stageRequirement].title)
+                        : language === "zh"
+                          ? unlockInfo?.costLabelZh ?? "通过议会指令解锁。"
+                          : unlockInfo?.costLabel ?? "Unlock via council directive.";
                       return (
                         <div
                           key={resource.key}
-                          className="flex w-64 flex-shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/50 bg-muted/20 p-4"
+                          className="flex w-64 flex-shrink-0 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/50 bg-muted/20 p-4"
                         >
                           <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted/30">
                             <Lock className="h-6 w-6 text-muted-foreground" />
@@ -2911,13 +3586,23 @@ export default function Home() {
                             {language === "zh" ? resource.labelZh : resource.label}
                           </p>
                           <p className="text-center text-xs text-muted-foreground">
-                            {language === "zh"
-                              ? languageLabels.districtLocked(TUTORIAL_STAGES[RESOURCE_UNLOCK_STAGE[resource.key]].titleZh)
-                              : languageLabels.districtLocked(TUTORIAL_STAGES[RESOURCE_UNLOCK_STAGE[resource.key]].title)}
+                            {unlockDescription}
                           </p>
-                          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                            {languageLabels.lockedBadge}
-                          </Badge>
+                          {hasCostUnlock ? (
+                            <Button
+                              size="sm"
+                              disabled={!canAffordUnlock}
+                              onClick={() => handleUnlockResource(resource.key)}
+                              type="button"
+                              className="w-full"
+                            >
+                              {language === "zh" ? "解锁" : "Unlock"}
+                            </Button>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                              {languageLabels.lockedBadge}
+                            </Badge>
+                          )}
                         </div>
                       );
                     })}
@@ -3740,60 +4425,6 @@ export default function Home() {
                   <CardDescription>{languageLabels.ledgerDescription}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="rounded-2xl border border-dashed border-border/50 bg-muted/10 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {language === "zh" ? "存档管理" : "Save Management"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {language === "zh"
-                            ? "复制存档字符串或粘贴数据导入。"
-                            : "Copy your save string or paste data to import."}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="outline" size="sm" onClick={handleExportSave} type="button">
-                          {language === "zh" ? "导出" : "Export"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSaveModalOpen((prev) => !prev)}
-                          type="button"
-                        >
-                          {saveModalOpen ? (language === "zh" ? "收起" : "Hide") : language === "zh" ? "导入" : "Import"}
-                        </Button>
-                      </div>
-                    </div>
-                    {saveModalOpen ? (
-                      <div className="mt-4 space-y-3">
-                        <textarea
-                          className="w-full rounded-2xl border border-border/60 bg-background/80 p-3 text-xs font-mono leading-relaxed"
-                          rows={6}
-                          value={saveString}
-                          onChange={handleImportChange}
-                          placeholder={
-                            language === "zh"
-                              ? "在此粘贴存档数据，或点击导出生成。"
-                              : "Paste save data here, or click export to generate."
-                          }
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="outline" size="sm" onClick={handleCopySave} type="button">
-                            {language === "zh" ? "复制" : "Copy"}
-                          </Button>
-                          <Button size="sm" onClick={handleImportApply} type="button">
-                            {language === "zh" ? "导入存档" : "Apply Import"}
-                          </Button>
-                        </div>
-                        {importError ? (
-                          <p className="text-xs text-destructive">{importError}</p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-
                   <div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>{language === "zh" ? activeStage.titleZh : activeStage.title}</span>
@@ -4002,43 +4633,29 @@ export default function Home() {
 
             {activePanel === "settings" && (<Card>
               <CardHeader>
-                <CardTitle>{language === "zh" ? "存档管理" : "Save Management"}</CardTitle>
+                <CardTitle>{language === "zh" ? "设置" : "Settings"}</CardTitle>
                 <CardDescription>
-                  {language === "zh" ? "导出或导入游戏存档。" : "Export or import game saves."}
+                  {language === "zh" ? "游戏设置与语言选项。" : "Game settings and language options."}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <Button onClick={handleExportSave} variant="outline" size="sm" type="button">
-                    {language === "zh" ? "导出存档" : "Export Save"}
-                  </Button>
-                  <Button onClick={() => setSaveModalOpen(true)} variant="outline" size="sm" type="button">
-                    {language === "zh" ? "导入存档" : "Import Save"}
-                  </Button>
-                </div>
-                {saveModalOpen && (
-                  <div className="space-y-3">
-                    <textarea
-                      className="w-full rounded-xl border border-border bg-background p-3 text-xs font-mono"
-                      rows={6}
-                      value={saveString}
-                      onChange={handleImportChange}
-                      placeholder={language === "zh" ? "粘贴存档字符串..." : "Paste save string..."}
-                    />
-                    <div className="flex gap-2">
-                      <Button onClick={handleImportApply} size="sm" type="button">
-                        {language === "zh" ? "应用" : "Apply"}
-                      </Button>
-                      <Button onClick={handleCopySave} variant="outline" size="sm" type="button">
-                        {language === "zh" ? "复制" : "Copy"}
-                      </Button>
-                      <Button onClick={() => setSaveModalOpen(false)} variant="ghost" size="sm" type="button">
-                        {language === "zh" ? "取消" : "Cancel"}
-                      </Button>
-                    </div>
-                    {importError && <p className="text-xs text-destructive">{importError}</p>}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{language === "zh" ? "语言" : "Language"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {language === "zh" ? "切换界面语言" : "Switch interface language"}
+                    </p>
                   </div>
-                )}
+                  <LanguageToggle />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{language === "zh" ? "当前存档" : "Current Save"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {currentSaveName || (language === "zh" ? "未命名" : "Unnamed")}
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>)}
         </main>
