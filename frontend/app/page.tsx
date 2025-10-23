@@ -47,6 +47,7 @@ type Action = {
   cost: string;
   costZh: string;
   cooldown: string;
+  duration?: number;
   delta?: ResourceDelta;
   rateDelta?: Partial<Record<ResourceKey, number>>;
   capacityDelta?: Partial<Record<ResourceKey, number>>;
@@ -516,14 +517,16 @@ const ACTIONS: Action[] = [
     id: "forage-sunleaf",
     label: "Harvest Sunleaf",
     labelZh: "收割向日叶",
-    description: "Dispatch gatherers to clip dew-rich sunleaf fronds.",
-    descriptionZh: "派遣采集者修剪含露的向日叶。",
-    cost: "-2 Execution",
-    costZh: "-2 执行力",
+    description: "Boost manual harvest efficiency by 20% for 5 minutes.",
+    descriptionZh: "手动采集效率提升 20%，持续 5 分钟。",
+    cost: "-5 Execution",
+    costZh: "-5 执行力",
     cooldown: "30:00",
-    delta: { sunleaf: 20, execution: -2 },
-    log: "Harvesters return with baskets overflowing with sunleaf fronds.",
-    logZh: "采摘队满载向日叶归来。",
+    duration: 300,
+    delta: { execution: -5 },
+    rateDelta: { sunleaf: 0.2 },
+    log: "Council decree: Harvest crews work with renewed vigor (+20% efficiency, 5 min).",
+    logZh: "议会指令：采集队效率提升（+20%，持续 5 分钟）。",
     requiredStage: 0,
   },
   {
@@ -832,6 +835,14 @@ export default function Home() {
     energy: 0,
     execution: 0,
   });
+  const [activeBoosts, setActiveBoosts] = useState<Array<{
+    actionId: string;
+    label: string;
+    labelZh: string;
+    remainingTicks: number;
+    totalDuration: number;
+    rateDelta: Partial<Record<ResourceKey, number>>;
+  }>>([]);
 
   useEffect(() => {
     if (showIntroDialogue) {
@@ -1156,6 +1167,38 @@ export default function Home() {
       window.clearInterval(id);
     };
   }, [tenantTimeout, pendingTenants, language]);
+
+  useEffect(() => {
+    if (activeBoosts.length === 0) {
+      return;
+    }
+    setActiveBoosts((prev) => {
+      const updated = prev.map((boost) => ({
+        ...boost,
+        remainingTicks: boost.remainingTicks - 1,
+      })).filter((boost) => boost.remainingTicks > 0);
+      return updated;
+    });
+  }, [tick]);
+
+  useEffect(() => {
+    const totalRateBoost: Partial<Record<ResourceKey, number>> = {};
+    activeBoosts.forEach((boost) => {
+      Object.entries(boost.rateDelta).forEach(([key, value]) => {
+        const resourceKey = key as ResourceKey;
+        totalRateBoost[resourceKey] = (totalRateBoost[resourceKey] ?? 0) + (value ?? 0);
+      });
+    });
+    setResources((prev) => {
+      return prev.map((resource) => {
+        const baseRate = resource.rate - (totalRateBoost[resource.key] ?? 0);
+        return {
+          ...resource,
+          rate: baseRate + (totalRateBoost[resource.key] ?? 0),
+        };
+      });
+    });
+  }, [activeBoosts]);
 
   const PhaseIcon = isNight ? Moon : Sun;
   const eraLabel = seasonBadge;
@@ -2262,7 +2305,7 @@ export default function Home() {
       if (action.delta) {
         next = applyResourceDelta(next, action.delta);
       }
-      if (action.rateDelta) {
+      if (action.rateDelta && !action.duration) {
         next = applyRateDelta(next, action.rateDelta);
       }
       if (action.capacityDelta) {
@@ -2270,6 +2313,21 @@ export default function Home() {
       }
       return next;
     });
+    if (action.duration && action.rateDelta) {
+      const durationInTicks = Math.ceil(action.duration / (PHASE_INTERVAL_MS / 1000));
+      const rateDelta = action.rateDelta;
+      setActiveBoosts((prev) => [
+        ...prev.filter((b) => b.actionId !== action.id),
+        {
+          actionId: action.id,
+          label: action.label,
+          labelZh: action.labelZh,
+          remainingTicks: durationInTicks,
+          totalDuration: durationInTicks,
+          rateDelta,
+        },
+      ]);
+    }
     const entry = language === "zh" ? action.logZh : action.log;
     setLog((prev) => [entry, ...prev].slice(0, 6));
   };
@@ -3185,6 +3243,47 @@ export default function Home() {
                 </div>
               </CardHeader>
               {expandedCards.council && (<CardContent className="space-y-4">
+                {activeBoosts.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-xs uppercase tracking-[0.32em] text-muted-foreground">
+                      {language === "zh" ? "激活的增益" : "Active Boosts"}
+                    </p>
+                    {activeBoosts.map((boost) => {
+                      const remainingSeconds = Math.ceil(boost.remainingTicks * (PHASE_INTERVAL_MS / 1000));
+                      const totalSeconds = Math.ceil(boost.totalDuration * (PHASE_INTERVAL_MS / 1000));
+                      const progress = (boost.remainingTicks / boost.totalDuration) * 100;
+                      const minutes = Math.floor(remainingSeconds / 60);
+                      const seconds = remainingSeconds % 60;
+                      return (
+                        <div
+                          key={boost.actionId}
+                          className="rounded-2xl border border-primary/30 bg-primary/5 p-4"
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-semibold text-primary">
+                              {language === "zh" ? boost.labelZh : boost.label}
+                            </p>
+                            <Badge variant="outline" className="text-[11px] text-primary">
+                              {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
+                            </Badge>
+                          </div>
+                          <Progress value={progress} className="mt-3 h-2" />
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {Object.entries(boost.rateDelta).map(([key, value]) => {
+                              const resource = resources.find((r) => r.key === key);
+                              if (!resource) return null;
+                              return (
+                                <span key={key}>
+                                  {language === "zh" ? resource.labelZh : resource.label} +{Math.round((value ?? 0) * 100)}%
+                                </span>
+                              );
+                            })}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {unlockedActions.map((action) => {
                   const disabled = !canExecute(action);
                   return (
