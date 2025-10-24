@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Brain, Flame, Hammer, Leaf, Moon, Mountain, Sun, Clock, Lock, Sparkles, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, Flame, Hammer, Leaf, Moon, Mountain, Sun, Clock, Lock, Sparkles, X, ChevronDown, ChevronUp, Wheat, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,9 +32,9 @@ declare global {
 }
 
 type BlueprintCategory = "tools" | "items";
-type NavigationPanel = "resources" | "facilities" | "council" | "crafting" | "story" | "citizens" | "settings";
+type NavigationPanel = "resources" | "facilities" | "council" | "crafting" | "story" | "citizens" | "research" | "settings";
 
-type ResourceKey = "sunleaf" | "wood" | "stone" | "science" | "energy" | "execution";
+type ResourceKey = "sunleaf" | "wood" | "stone" | "science" | "energy" | "execution" | "rice";
 
 type Resource = {
   key: ResourceKey;
@@ -114,10 +114,11 @@ type ToolRecipe = {
   cost: ResourceDelta;
   craftTime: number;
   material: ToolMaterial;
-  toolType: "saw" | "pickaxe" | "shears";
+  toolType: "saw" | "pickaxe" | "shears" | "plow" | "rake";
   harvestBonus: Partial<Record<ResourceKey, number>>;
   cooldownReduction: number;
   requiredStage: number;
+  researchRequired?: boolean; // 是否需要研究解锁
 };
 
 type Facility = {
@@ -142,6 +143,28 @@ type Skill = {
   maxLevel: number;
 };
 
+type KnowledgeCategory = "agriculture";
+
+type Knowledge = {
+  id: string;
+  name: string;
+  nameZh: string;
+  description: string;
+  descriptionZh: string;
+  category: KnowledgeCategory;
+  unlocks?: string; // 解锁的工具或资源ID
+};
+
+type ResearchProject = {
+  id: string;
+  startTime: number;
+  duration: number; // 秒
+  baseSuccessRate: number; // 基础成功率 (10%)
+  sponsorCount: number; // 赞助次数
+  sponsorCost: number; // 每次赞助成本
+  maxSponsors: number; // 最大赞助次数
+};
+
 const SKILL_EXP_PER_LEVEL = 100;
 const MAX_SKILL_LEVEL = 100;
 
@@ -152,6 +175,7 @@ const SKILL_RESOURCE_MAP: Record<ResourceKey, SkillType | null> = {
   science: null,
   energy: "gathering",
   execution: null,
+  rice: "gathering",
 };
 
 const INITIAL_SKILLS: Skill[] = [
@@ -180,6 +204,36 @@ const INITIAL_RESOURCES: Resource[] = [
   { key: "science", label: "Insight", labelZh: "灵感", amount: 0, rate: 0, capacity: 25, icon: Brain },
   { key: "energy", label: "Ember", labelZh: "余烬", amount: 0, rate: 0, capacity: 20, icon: Flame },
   { key: "execution", label: "Execution", labelZh: "执行力", amount: 0, rate: 0, capacity: 10, icon: Sparkles },
+];
+
+const KNOWLEDGE_DATABASE: Knowledge[] = [
+  {
+    id: "plow",
+    name: "Plow",
+    nameZh: "犁",
+    description: "A farming tool for tilling soil and planting rice.",
+    descriptionZh: "用于耕地和种植水稻的农具。",
+    category: "agriculture",
+    unlocks: "plow-tool",
+  },
+  {
+    id: "rake",
+    name: "Rake",
+    nameZh: "耙子",
+    description: "A tool for leveling fields and managing rice paddies.",
+    descriptionZh: "用于平整田地和管理稻田的工具。",
+    category: "agriculture",
+    unlocks: "rake-tool",
+  },
+  {
+    id: "rice-cultivation",
+    name: "Rice Cultivation",
+    nameZh: "水稻种植",
+    description: "Knowledge of growing and harvesting rice.",
+    descriptionZh: "种植和收获水稻的知识。",
+    category: "agriculture",
+    unlocks: "rice-resource",
+  },
 ];
 
 const RECIPES: Recipe[] = [
@@ -375,6 +429,66 @@ const TOOL_RECIPES: ToolRecipe[] = [
     harvestBonus: { sunleaf: 8 },
     cooldownReduction: 15,
     requiredStage: 3,
+  },
+  {
+    id: "wooden-plow",
+    name: "Wooden Plow",
+    nameZh: "木犁",
+    description: "A basic plow for rice cultivation.",
+    descriptionZh: "基础犁，用于水稻种植。",
+    cost: { wood: -8 },
+    craftTime: 40,
+    material: "wooden",
+    toolType: "plow",
+    harvestBonus: { rice: 2 },
+    cooldownReduction: 5,
+    requiredStage: 0,
+    researchRequired: true,
+  },
+  {
+    id: "stone-plow",
+    name: "Stone Plow",
+    nameZh: "石犁",
+    description: "A reinforced plow with stone blade.",
+    descriptionZh: "带有石刃的加固犁。",
+    cost: { wood: -10, stone: -8 },
+    craftTime: 60,
+    material: "stone",
+    toolType: "plow",
+    harvestBonus: { rice: 4 },
+    cooldownReduction: 8,
+    requiredStage: 1,
+    researchRequired: true,
+  },
+  {
+    id: "wooden-rake",
+    name: "Wooden Rake",
+    nameZh: "木耙",
+    description: "A basic rake for field management.",
+    descriptionZh: "基础耙子，用于田地管理。",
+    cost: { wood: -6 },
+    craftTime: 35,
+    material: "wooden",
+    toolType: "rake",
+    harvestBonus: { rice: 1 },
+    cooldownReduction: 3,
+    requiredStage: 0,
+    researchRequired: true,
+  },
+  {
+    id: "stone-rake",
+    name: "Stone Rake",
+    nameZh: "石耙",
+    description: "A durable rake with stone teeth.",
+    descriptionZh: "带有石齿的耐用耙子。",
+    cost: { wood: -8, stone: -6 },
+    craftTime: 50,
+    material: "stone",
+    toolType: "rake",
+    harvestBonus: { rice: 3 },
+    cooldownReduction: 6,
+    requiredStage: 1,
+    researchRequired: true,
   },
 ];
 
@@ -613,12 +727,13 @@ const ACTIONS: Action[] = [
 ];
 
 const MANUAL_HARVEST_REWARDS: Record<ResourceKey, ResourceDelta> = {
-  sunleaf: { sunleaf: 3 },
+  sunleaf: { sunleaf: 2.5 },
   wood: { wood: 1 },
-  stone: { stone: 2 },
-  science: { science: 1 },
-  energy: { energy: 1 },
+  stone: { stone: 1.5 },
+  science: { science: 0.5 },
+  energy: { energy: 0.1 },
   execution: { execution: 0.5 },
+  rice: { rice: 1 },
 };
 
 const MANUAL_HARVEST_COOLDOWN_SECONDS = 30;
@@ -654,6 +769,14 @@ const RESOURCE_UNLOCK_DATA: Record<ResourceKey, ResourceUnlockInfo> = {
     costLabelZh: "消耗 40 份向日叶",
     log: "Landlord unlocks the timber ledger after receiving 40 sunleaf.",
     logZh: "缴纳 40 份向日叶后，房东开放木材账册。",
+  },
+  rice: {
+    stage: 2,
+    cost: { science: 50 },
+    costLabel: "Research rice cultivation",
+    costLabelZh: "研究水稻种植",
+    log: "Discovered rice cultivation through research.",
+    logZh: "通过研究发现了水稻种植技术。"
   },
   stone: {
     stage: 1,
@@ -810,6 +933,7 @@ export default function Home() {
     science: 0,
     energy: 0,
     execution: 0,
+    rice: 0,
   });
   const [manualHarvestActive, setManualHarvestActive] = useState<Record<ResourceKey, boolean>>({
     sunleaf: false,
@@ -818,6 +942,7 @@ export default function Home() {
     science: false,
     energy: false,
     execution: false,
+    rice: false,
   });
   const { language } = useLanguage();
   const localizedDefaults = useMemo(
@@ -900,6 +1025,7 @@ export default function Home() {
     science: 0,
     energy: 0,
     execution: 0,
+    rice: 0,
   });
   const [manuallyUnlockedResources, setManuallyUnlockedResources] = useState<ResourceKey[]>([]);
   const [activeBoosts, setActiveBoosts] = useState<Array<{
@@ -910,6 +1036,11 @@ export default function Home() {
     totalDuration: number;
     rateDelta: Partial<Record<ResourceKey, number>>;
   }>>([]);
+  
+  // 研究系统状态
+  const [researchProjects, setResearchProjects] = useState<ResearchProject[]>([]);
+  const [discoveredKnowledge, setDiscoveredKnowledge] = useState<string[]>([]);
+  const [researchIdCounter, setResearchIdCounter] = useState(0);
 
   useEffect(() => {
     if (showIntroDialogue) {
@@ -959,6 +1090,9 @@ export default function Home() {
       skills,
       resourceWorkers,
       manuallyUnlockedResources,
+      researchProjects,
+      discoveredKnowledge,
+      researchIdCounter,
     };
     const saveData = JSON.stringify(payload);
     
@@ -975,7 +1109,7 @@ export default function Home() {
     } catch (error) {
       console.error('Failed to save game:', error);
     }
-  }, [resources, tick, stageIndex, showTutorial, showIntroDialogue, introIndex, unlockedChapters, activeChapterId, milestones, completedPurchases, purchaseCounts, civilizationLevel, manualCooldowns, manualHarvestActive, log, language, districts, craftingRecipe, craftingProgress, equippedTools, facilityCounts, selectedFacilityId, tenantRecruitCooldown, pendingTenants, tenantTimeout, assignedTenants, tenantMorale, autoPayWages, lastPayDay, skills, resourceWorkers, manuallyUnlockedResources]);
+  }, [resources, tick, stageIndex, showTutorial, showIntroDialogue, introIndex, unlockedChapters, activeChapterId, milestones, completedPurchases, purchaseCounts, civilizationLevel, manualCooldowns, manualHarvestActive, log, language, districts, craftingRecipe, craftingProgress, equippedTools, facilityCounts, selectedFacilityId, tenantRecruitCooldown, pendingTenants, tenantTimeout, assignedTenants, tenantMorale, autoPayWages, lastPayDay, skills, resourceWorkers, manuallyUnlockedResources, researchProjects, discoveredKnowledge, researchIdCounter]);
 
   const loadGame = useCallback(async (saveName: string) => {
     if (typeof window === 'undefined') return false;
@@ -1104,6 +1238,7 @@ export default function Home() {
           science: typeof parsed.resourceWorkers.science === "number" ? parsed.resourceWorkers.science : 0,
           energy: typeof parsed.resourceWorkers.energy === "number" ? parsed.resourceWorkers.energy : 0,
           execution: typeof parsed.resourceWorkers.execution === "number" ? parsed.resourceWorkers.execution : 0,
+          rice: typeof parsed.resourceWorkers.rice === "number" ? parsed.resourceWorkers.rice : 0,
         });
       } else {
         setResourceWorkers({
@@ -1113,10 +1248,26 @@ export default function Home() {
           science: 0,
           energy: 0,
           execution: 0,
+          rice: 0,
         });
       }
       if (Array.isArray(parsed.manuallyUnlockedResources)) {
         setManuallyUnlockedResources(parsed.manuallyUnlockedResources);
+      }
+      if (Array.isArray(parsed.researchProjects)) {
+        setResearchProjects(parsed.researchProjects);
+      } else {
+        setResearchProjects([]);
+      }
+      if (Array.isArray(parsed.discoveredKnowledge)) {
+        setDiscoveredKnowledge(parsed.discoveredKnowledge);
+      } else {
+        setDiscoveredKnowledge([]);
+      }
+      if (typeof parsed.researchIdCounter === "number") {
+        setResearchIdCounter(parsed.researchIdCounter);
+      } else {
+        setResearchIdCounter(0);
       }
       setCurrentSaveName(saveName);
       
@@ -1285,6 +1436,7 @@ export default function Home() {
             science: typeof parsed.resourceWorkers.science === "number" ? parsed.resourceWorkers.science : 0,
             energy: typeof parsed.resourceWorkers.energy === "number" ? parsed.resourceWorkers.energy : 0,
             execution: typeof parsed.resourceWorkers.execution === "number" ? parsed.resourceWorkers.execution : 0,
+            rice: typeof parsed.resourceWorkers.rice === "number" ? parsed.resourceWorkers.rice : 0,
           });
         } else {
           setResourceWorkers({
@@ -1294,6 +1446,7 @@ export default function Home() {
             science: 0,
             energy: 0,
             execution: 0,
+            rice: 0,
           });
         }
         if (Array.isArray(parsed.manuallyUnlockedResources)) {
@@ -1916,6 +2069,7 @@ export default function Home() {
         science: "",
         energy: "",
         execution: "",
+        rice: "plow",
       };
       const toolType = toolTypeMap[resourceKey];
       if (!toolType) {
@@ -2322,6 +2476,168 @@ export default function Home() {
     [resourceWorkers, resources, language],
   );
 
+  // 研究系统函数
+  const getResearchCost = useCallback(() => {
+    const baseCost = 25;
+    const additionalCost = researchProjects.length * 5;
+    return baseCost + additionalCost;
+  }, [researchProjects.length]);
+
+  const handleStartResearch = useCallback(() => {
+    const cost = getResearchCost();
+    const scienceResource = resources.find((r) => r.key === "science");
+    
+    if (!scienceResource || scienceResource.amount < cost) {
+      return;
+    }
+
+    // 扣除灵感
+    setResources((prev) =>
+      prev.map((r) =>
+        r.key === "science" ? { ...r, amount: r.amount - cost } : r
+      )
+    );
+
+    // 创建新研究项目
+    const newProject: ResearchProject = {
+      id: `research-${researchIdCounter}`,
+      startTime: Date.now(),
+      duration: 300, // 5分钟 = 300秒
+      baseSuccessRate: 10,
+      sponsorCount: 0,
+      sponsorCost: 5,
+      maxSponsors: 8,
+    };
+
+    setResearchProjects((prev) => [...prev, newProject]);
+    setResearchIdCounter((prev) => prev + 1);
+
+    const entry =
+      language === "zh"
+        ? `开始新研究项目，消耗 ${cost} 点灵感。`
+        : `Started new research project, consumed ${cost} Insight.`;
+    setLog((prev) => [entry, ...prev].slice(0, 6));
+  }, [getResearchCost, resources, researchIdCounter, language]);
+
+  const handleSponsorResearch = useCallback(
+    (projectId: string) => {
+      const project = researchProjects.find((p) => p.id === projectId);
+      if (!project || project.sponsorCount >= project.maxSponsors) {
+        return;
+      }
+
+      const scienceResource = resources.find((r) => r.key === "science");
+      if (!scienceResource || scienceResource.amount < project.sponsorCost) {
+        return;
+      }
+
+      // 扣除灵感
+      setResources((prev) =>
+        prev.map((r) =>
+          r.key === "science" ? { ...r, amount: r.amount - project.sponsorCost } : r
+        )
+      );
+
+      // 更新赞助次数
+      setResearchProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectId ? { ...p, sponsorCount: p.sponsorCount + 1 } : p
+        )
+      );
+
+      const entry =
+        language === "zh"
+          ? `赞助研究项目，消耗 ${project.sponsorCost} 点灵感，成功率 +5%。`
+          : `Sponsored research project, consumed ${project.sponsorCost} Insight, +5% success rate.`;
+      setLog((prev) => [entry, ...prev].slice(0, 6));
+    },
+    [researchProjects, resources, language]
+  );
+
+  const completeResearch = useCallback(
+    (projectId: string) => {
+      const project = researchProjects.find((p) => p.id === projectId);
+      if (!project) return;
+
+      const successRate = project.baseSuccessRate + project.sponsorCount * 5;
+      const isSuccess = Math.random() * 100 < successRate;
+
+      // 移除完成的项目
+      setResearchProjects((prev) => prev.filter((p) => p.id !== projectId));
+
+      if (isSuccess) {
+        // 随机选择一个未发现的知识
+        const undiscovered = KNOWLEDGE_DATABASE.filter(
+          (k) => !discoveredKnowledge.includes(k.id)
+        );
+
+        if (undiscovered.length > 0) {
+          const discovered = undiscovered[Math.floor(Math.random() * undiscovered.length)];
+          setDiscoveredKnowledge((prev) => [...prev, discovered.id]);
+
+          // 解锁对应的内容
+          if (discovered.unlocks === "rice-resource") {
+            // 添加水稻资源
+            setResources((prev) => {
+              const hasRice = prev.some((r) => r.key === "rice");
+              if (!hasRice) {
+                return [
+                  ...prev,
+                  {
+                    key: "rice" as ResourceKey,
+                    label: "Rice",
+                    labelZh: "水稻",
+                    amount: 0,
+                    rate: 0,
+                    capacity: 30,
+                    icon: Wheat,
+                  },
+                ];
+              }
+              return prev;
+            });
+          }
+
+          const entry =
+            language === "zh"
+              ? `研究成功！发现新知识：${discovered.nameZh}。`
+              : `Research succeeded! Discovered: ${discovered.name}.`;
+          setLog((prev) => [entry, ...prev].slice(0, 6));
+        } else {
+          const entry =
+            language === "zh"
+              ? `研究成功，但没有新发现。`
+              : `Research succeeded, but no new discoveries.`;
+          setLog((prev) => [entry, ...prev].slice(0, 6));
+        }
+      } else {
+        const entry =
+          language === "zh"
+            ? `研究失败，未能取得突破。`
+            : `Research failed, no breakthrough achieved.`;
+        setLog((prev) => [entry, ...prev].slice(0, 6));
+      }
+    },
+    [researchProjects, discoveredKnowledge, language]
+  );
+
+  // 研究项目倒计时
+  useEffect(() => {
+    if (researchProjects.length === 0) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      researchProjects.forEach((project) => {
+        const elapsed = (now - project.startTime) / 1000;
+        if (elapsed >= project.duration) {
+          completeResearch(project.id);
+        }
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [researchProjects, completeResearch]);
+
   const handlePayWages = useCallback(() => {
     const totalWage = assignedTenants * WAGE_PER_TENANT_PER_DAY;
     const sunleafResource = resources.find((r) => r.key === "sunleaf");
@@ -2674,8 +2990,8 @@ export default function Home() {
     setCompletedPurchases([]);
     setPurchaseCounts({});
     setCivilizationLevel(0);
-    setManualCooldowns({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0 });
-    setManualHarvestActive({ sunleaf: false, wood: false, stone: false, science: false, energy: false, execution: false });
+    setManualCooldowns({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0 });
+    setManualHarvestActive({ sunleaf: false, wood: false, stone: false, science: false, energy: false, execution: false, rice: false });
     setLog(localizedDefaults);
     setDistricts(DISTRICTS);
     setCraftingRecipe(null);
@@ -2691,8 +3007,11 @@ export default function Home() {
     setAutoPayWages(false);
     setLastPayDay(0);
     setSkills(INITIAL_SKILLS);
-    setResourceWorkers({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0 });
+    setResourceWorkers({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0 });
     setManuallyUnlockedResources([]);
+    setResearchProjects([]);
+    setDiscoveredKnowledge([]);
+    setResearchIdCounter(0);
     setCurrentSaveName(newGameName.trim());
     saveGame(newGameName.trim());
     setGameState('playing');
@@ -3475,6 +3794,15 @@ export default function Home() {
                   {language === "zh" ? "市民" : "Citizens"}
                 </Button>
                 <Button
+                  variant={activePanel === "research" ? "default" : "ghost"}
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => setActivePanel("research")}
+                  type="button"
+                >
+                  {language === "zh" ? "研究" : "Research"}
+                </Button>
+                <Button
                   variant={activePanel === "settings" ? "default" : "ghost"}
                   size="sm"
                   className="rounded-full"
@@ -4210,7 +4538,22 @@ export default function Home() {
                             );
                           })}
                         </div>
-                        {TOOL_RECIPES.filter((tool) => tool.material === selectedMaterial && stageIndex >= tool.requiredStage).map(
+                        {TOOL_RECIPES.filter((tool) => {
+                          // 检查阶段要求
+                          if (stageIndex < tool.requiredStage) return false;
+                          // 检查材料
+                          if (tool.material !== selectedMaterial) return false;
+                          // 如果需要研究解锁，检查是否已解锁
+                          if (tool.researchRequired) {
+                            const requiredKnowledge = KNOWLEDGE_DATABASE.find(
+                              (k) => k.unlocks === `${tool.id.split('-')[1]}-tool`
+                            );
+                            if (requiredKnowledge && !discoveredKnowledge.includes(requiredKnowledge.id)) {
+                              return false;
+                            }
+                          }
+                          return true;
+                        }).map(
                   (tool) => {
                     const disabled = !canAffordToolRecipe(tool) || Boolean(craftingRecipe);
                     const isCrafting = craftingRecipe === tool.id;
@@ -4630,6 +4973,182 @@ export default function Home() {
                     </div>
                   );
                 })}
+              </CardContent>
+            </Card>
+            </>)}
+
+            {activePanel === "research" && (<>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FlaskConical className="h-5 w-5" />
+                  {language === "zh" ? "研究项目" : "Research Projects"}
+                </CardTitle>
+                <CardDescription>
+                  {language === "zh" 
+                    ? "开展研究项目以发现新知识。基础成功率10%，每赞助5点灵感增加5%成功率。" 
+                    : "Conduct research projects to discover new knowledge. Base 10% success rate, +5% per 5 Insight sponsored."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 p-4">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {language === "zh" ? "开始新研究" : "Start New Research"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {language === "zh" 
+                        ? `消耗 ${getResearchCost()} 点灵感，研究时长 5 分钟` 
+                        : `Costs ${getResearchCost()} Insight, 5 minutes duration`}
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleStartResearch}
+                    disabled={!resources.find((r) => r.key === "science") || 
+                             resources.find((r) => r.key === "science")!.amount < getResearchCost()}
+                    size="sm"
+                  >
+                    <FlaskConical className="mr-2 h-4 w-4" />
+                    {language === "zh" ? "添加项目" : "Add Project"}
+                  </Button>
+                </div>
+
+                {researchProjects.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border/60 p-8 text-center">
+                    <FlaskConical className="mx-auto h-12 w-12 text-muted-foreground/40" />
+                    <p className="mt-4 text-sm text-muted-foreground">
+                      {language === "zh" ? "暂无进行中的研究项目" : "No active research projects"}
+                    </p>
+                  </div>
+                )}
+
+                {researchProjects.map((project) => {
+                  const elapsed = Math.floor((Date.now() - project.startTime) / 1000);
+                  const remaining = Math.max(0, project.duration - elapsed);
+                  const progress = Math.min(100, (elapsed / project.duration) * 100);
+                  const successRate = project.baseSuccessRate + project.sponsorCount * 5;
+                  const minutes = Math.floor(remaining / 60);
+                  const seconds = remaining % 60;
+
+                  return (
+                    <div
+                      key={project.id}
+                      className="rounded-lg border border-border/60 bg-background/40 p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">
+                            {language === "zh" ? "研究项目" : "Research Project"} #{project.id.split('-')[1]}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {language === "zh" ? "成功率" : "Success Rate"}: {successRate}%
+                          </p>
+                        </div>
+                        <Badge variant="outline">
+                          <Clock className="mr-1 h-3 w-3" />
+                          {minutes}:{seconds.toString().padStart(2, '0')}
+                        </Badge>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Progress value={progress} />
+                        <p className="text-xs text-muted-foreground">
+                          {language === "zh" 
+                            ? `进度: ${progress.toFixed(0)}%` 
+                            : `Progress: ${progress.toFixed(0)}%`}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-muted-foreground">
+                          {language === "zh" 
+                            ? `已赞助 ${project.sponsorCount}/${project.maxSponsors} 次` 
+                            : `Sponsored ${project.sponsorCount}/${project.maxSponsors} times`}
+                        </div>
+                        <Button
+                          onClick={() => handleSponsorResearch(project.id)}
+                          disabled={
+                            project.sponsorCount >= project.maxSponsors ||
+                            !resources.find((r) => r.key === "science") ||
+                            resources.find((r) => r.key === "science")!.amount < project.sponsorCost
+                          }
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Sparkles className="mr-2 h-3 w-3" />
+                          {language === "zh" ? `赞助 (${project.sponsorCost})` : `Sponsor (${project.sponsorCost})`}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  {language === "zh" ? "已发现知识" : "Discovered Knowledge"}
+                </CardTitle>
+                <CardDescription>
+                  {language === "zh" 
+                    ? "通过研究发现的知识将显示在这里，并按类别分类。" 
+                    : "Knowledge discovered through research will appear here, categorized by type."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {discoveredKnowledge.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border/60 p-8 text-center">
+                    <Brain className="mx-auto h-12 w-12 text-muted-foreground/40" />
+                    <p className="mt-4 text-sm text-muted-foreground">
+                      {language === "zh" ? "尚未发现任何知识" : "No knowledge discovered yet"}
+                    </p>
+                  </div>
+                )}
+
+                {Object.entries(
+                  discoveredKnowledge.reduce((acc, knowledgeId) => {
+                    const knowledge = KNOWLEDGE_DATABASE.find((k) => k.id === knowledgeId);
+                    if (knowledge) {
+                      if (!acc[knowledge.category]) {
+                        acc[knowledge.category] = [];
+                      }
+                      acc[knowledge.category].push(knowledge);
+                    }
+                    return acc;
+                  }, {} as Record<KnowledgeCategory, Knowledge[]>)
+                ).map(([category, knowledgeList]) => (
+                  <div key={category} className="mb-6 last:mb-0">
+                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                      {language === "zh" 
+                        ? category === "agriculture" ? "农业" : category
+                        : category === "agriculture" ? "Agriculture" : category}
+                    </h3>
+                    <div className="space-y-2">
+                      {knowledgeList.map((knowledge) => (
+                        <div
+                          key={knowledge.id}
+                          className="rounded-lg border border-border/60 bg-background/40 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold">
+                                {language === "zh" ? knowledge.nameZh : knowledge.name}
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {language === "zh" ? knowledge.descriptionZh : knowledge.description}
+                              </p>
+                            </div>
+                            <Badge variant="outline" className="shrink-0">
+                              {language === "zh" ? "已解锁" : "Unlocked"}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </CardContent>
             </Card>
             </>)}
