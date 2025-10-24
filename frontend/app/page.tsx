@@ -2541,7 +2541,7 @@ export default function Home() {
   }, [tick, isNight, phaseLabel, phaseDisplay, language]);
 
   useEffect(() => {
-    if (!craftingRecipe || craftingProgress >= 100) {
+    if (!craftingRecipe) {
       return;
     }
     const recipe = RECIPES.find((r) => r.id === craftingRecipe);
@@ -2550,10 +2550,13 @@ export default function Home() {
     if (!activeRecipe) {
       return;
     }
+    
+    // Calculate progress percentage instead of seconds
+    const progressIncrement = 100 / activeRecipe.craftTime;
     const id = window.setInterval(() => {
       setCraftingProgress((prev) => {
-        const next = prev + 1;
-        if (next >= activeRecipe.craftTime) {
+        const next = Math.min(prev + progressIncrement, 100);
+        if (next >= 100) {
           if (recipe) {
             setPendingAllocation({ recipeId: craftingRecipe, boost: recipe.capacityBoost });
           } else if (toolRecipe) {
@@ -2580,7 +2583,7 @@ export default function Home() {
     return () => {
       window.clearInterval(id);
     };
-  }, [craftingRecipe, craftingProgress, language]);
+  }, [craftingRecipe, language]);
 
   const canExecute = useCallback(
     (action: Action) =>
