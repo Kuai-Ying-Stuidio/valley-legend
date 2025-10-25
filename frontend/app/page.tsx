@@ -1170,7 +1170,6 @@ export default function Home() {
       if (Array.isArray(parsed.resources)) {
         setResources(
           parsed.resources.map((incoming: Resource) => {
-            // 对于动态资源，直接使用保存的数据
             if (incoming.key === "rice" || incoming.key === "time-shuttle") {
               return {
                 ...incoming,
@@ -1182,7 +1181,7 @@ export default function Home() {
             // 对于初始资源，使用标准映射逻辑
             const existing = INITIAL_RESOURCES.find((resource) => resource.key === incoming.key);
             if (!existing) {
-              return null; // 不应该发生，但为了安全
+              return null; 
             }
             return {
               ...existing,
@@ -2985,36 +2984,29 @@ export default function Home() {
     if (!activeRecipe) {
       return;
     }
-    
-    // Calculate progress percentage instead of seconds
-    const progressIncrement = 100 / activeRecipe.craftTime;
+
+    let elapsedTime = 0;
     const id = window.setInterval(() => {
-      setCraftingProgress((prev) => {
-        const next = Math.min(prev + progressIncrement, 100);
-        if (next >= 100) {
-          if (recipe) {
-            setPendingAllocation({ recipeId: craftingRecipe, boost: recipe.capacityBoost });
-          } else if (toolRecipe) {
-            setEquippedTools((prevTools) => ({ ...prevTools, [toolRecipe.toolType]: toolRecipe.id }));
-            const entry =
-              language === "zh"
-                ? `「${toolRecipe.nameZh}」制作完成，已装备。`
-                : `"${toolRecipe.name}" crafting complete; equipped.`;
-            setLog((prev) => [entry, ...prev].slice(0, 6));
-          }
-          setCraftingRecipe(null);
-          if (recipe) {
-            const entry =
-              language === "zh"
-                ? `「${recipe.nameZh}」制作完成，请分配储量提升。`
-                : `"${recipe.name}" crafting complete; allocate capacity boost.`;
-            setLog((prev) => [entry, ...prev].slice(0, 6));
-          }
-          return 0;
+      elapsedTime += 1;
+      const progress = Math.min((elapsedTime / activeRecipe.craftTime) * 100, 100);
+      setCraftingProgress(progress);
+
+      if (elapsedTime >= activeRecipe.craftTime) {
+        if (recipe) {
+          setPendingAllocation({ recipeId: craftingRecipe, boost: recipe.capacityBoost });
+        } else if (toolRecipe) {
+          setEquippedTools((prevTools) => ({ ...prevTools, [toolRecipe.toolType]: toolRecipe.id }));
+          const entry =
+            language === "zh"
+              ? `「${toolRecipe.nameZh}」制作完成，已装备。`
+              : `"${toolRecipe.name}" crafting complete; equipped.`;
+          setLog((prev) => [entry, ...prev].slice(0, 6));
         }
-        return next;
-      });
+        setCraftingRecipe(null);
+        setCraftingProgress(0);
+      }
     }, 1000);
+
     return () => {
       window.clearInterval(id);
     };
