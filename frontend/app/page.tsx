@@ -34,7 +34,7 @@ declare global {
 type BlueprintCategory = "tools" | "items";
 type NavigationPanel = "resources" | "facilities" | "council" | "crafting" | "story" | "citizens" | "research" | "settings";
 
-type ResourceKey = "sunleaf" | "wood" | "stone" | "science" | "energy" | "execution" | "rice";
+type ResourceKey = "sunleaf" | "wood" | "stone" | "science" | "energy" | "execution" | "rice" | "time-shuttle";
 
 type Resource = {
   key: ResourceKey;
@@ -143,7 +143,7 @@ type Skill = {
   maxLevel: number;
 };
 
-type KnowledgeCategory = "agriculture";
+type KnowledgeCategory = "agriculture" | "mining";
 
 type Knowledge = {
   id: string;
@@ -176,6 +176,7 @@ const SKILL_RESOURCE_MAP: Record<ResourceKey, SkillType | null> = {
   energy: "gathering",
   execution: null,
   rice: "gathering",
+  "time-shuttle": "mining",
 };
 
 const INITIAL_SKILLS: Skill[] = [
@@ -233,6 +234,24 @@ const KNOWLEDGE_DATABASE: Knowledge[] = [
     descriptionZh: "种植和收获水稻的知识。",
     category: "agriculture",
     unlocks: "rice-resource",
+  },
+  {
+    id: "hybrid-rice",
+    name: "Hybrid Rice",
+    nameZh: "杂交水稻",
+    description: "Advanced rice cultivation with hybrid varieties for increased yield.",
+    descriptionZh: "采用杂交品种的高级水稻种植技术，提高产量。",
+    category: "agriculture",
+    unlocks: "hybrid-rice-field",
+  },
+  {
+    id: "time-shuttle",
+    name: "Time Shuttle",
+    nameZh: "天梭",
+    description: "A temporal device powered by ember, used for manual collection.",
+    descriptionZh: "以余烬为原材料的矿石。",
+    category: "mining",
+    unlocks: "time-shuttle-resource",
   },
 ];
 
@@ -734,6 +753,7 @@ const MANUAL_HARVEST_REWARDS: Record<ResourceKey, ResourceDelta> = {
   energy: { energy: 0.1 },
   execution: { execution: 0.5 },
   rice: { rice: 1 },
+  "time-shuttle": { "time-shuttle": 1 },
 };
 
 const MANUAL_HARVEST_COOLDOWN_SECONDS = 30;
@@ -794,6 +814,11 @@ const RESOURCE_UNLOCK_DATA: Record<ResourceKey, ResourceUnlockInfo> = {
     costLabelZh: "消耗 30 单位木材",
     log: "Landlord grants execution authority after a timber tribute.",
     logZh: "缴纳 30 单位木材后，房东准许动用执行力。",
+  },
+  "time-shuttle": {
+    stage: null,
+    log: "Discovered time shuttle ore through research.",
+    logZh: "通过研究发现了天梭矿石。"
   },
 };
 
@@ -934,6 +959,7 @@ export default function Home() {
     energy: 0,
     execution: 0,
     rice: 0,
+    "time-shuttle": 0,
   });
   const [manualHarvestActive, setManualHarvestActive] = useState<Record<ResourceKey, boolean>>({
     sunleaf: false,
@@ -943,6 +969,7 @@ export default function Home() {
     energy: false,
     execution: false,
     rice: false,
+    "time-shuttle": false,
   });
   const { language } = useLanguage();
   const localizedDefaults = useMemo(
@@ -1026,6 +1053,7 @@ export default function Home() {
     energy: 0,
     execution: 0,
     rice: 0,
+    "time-shuttle": 0,
   });
   const [manuallyUnlockedResources, setManuallyUnlockedResources] = useState<ResourceKey[]>([]);
   const [activeBoosts, setActiveBoosts] = useState<Array<{
@@ -1041,6 +1069,7 @@ export default function Home() {
   const [researchProjects, setResearchProjects] = useState<ResearchProject[]>([]);
   const [discoveredKnowledge, setDiscoveredKnowledge] = useState<string[]>([]);
   const [researchIdCounter, setResearchIdCounter] = useState(0);
+  const [hybridRiceFields, setHybridRiceFields] = useState(0);
 
   useEffect(() => {
     if (showIntroDialogue) {
@@ -1093,6 +1122,7 @@ export default function Home() {
       researchProjects,
       discoveredKnowledge,
       researchIdCounter,
+      hybridRiceFields,
     };
     const saveData = JSON.stringify(payload);
     
@@ -1139,18 +1169,28 @@ export default function Home() {
       }
       if (Array.isArray(parsed.resources)) {
         setResources(
-          INITIAL_RESOURCES.map((resource) => {
-            const incoming = parsed.resources.find((item: Resource) => item?.key === resource.key);
-            if (!incoming) {
-              return resource;
+          parsed.resources.map((incoming: Resource) => {
+            // 对于动态资源，直接使用保存的数据
+            if (incoming.key === "rice" || incoming.key === "time-shuttle") {
+              return {
+                ...incoming,
+                amount: typeof incoming.amount === "number" ? incoming.amount : 0,
+                rate: typeof incoming.rate === "number" ? incoming.rate : 0,
+                capacity: typeof incoming.capacity === "number" ? incoming.capacity : 0,
+              };
+            }
+            // 对于初始资源，使用标准映射逻辑
+            const existing = INITIAL_RESOURCES.find((resource) => resource.key === incoming.key);
+            if (!existing) {
+              return null; // 不应该发生，但为了安全
             }
             return {
-              ...resource,
-              amount: typeof incoming.amount === "number" ? incoming.amount : resource.amount,
-              rate: typeof incoming.rate === "number" ? incoming.rate : resource.rate,
-              capacity: typeof incoming.capacity === "number" ? incoming.capacity : resource.capacity,
+              ...existing,
+              amount: typeof incoming.amount === "number" ? incoming.amount : existing.amount,
+              rate: typeof incoming.rate === "number" ? incoming.rate : existing.rate,
+              capacity: typeof incoming.capacity === "number" ? incoming.capacity : existing.capacity,
             };
-          }),
+          }).filter(Boolean) as Resource[]
         );
       } else {
         setResources(INITIAL_RESOURCES);
@@ -1239,6 +1279,7 @@ export default function Home() {
           energy: typeof parsed.resourceWorkers.energy === "number" ? parsed.resourceWorkers.energy : 0,
           execution: typeof parsed.resourceWorkers.execution === "number" ? parsed.resourceWorkers.execution : 0,
           rice: typeof parsed.resourceWorkers.rice === "number" ? parsed.resourceWorkers.rice : 0,
+          "time-shuttle": typeof parsed.resourceWorkers["time-shuttle"] === "number" ? parsed.resourceWorkers["time-shuttle"] : 0,
         });
       } else {
         setResourceWorkers({
@@ -1249,6 +1290,7 @@ export default function Home() {
           energy: 0,
           execution: 0,
           rice: 0,
+          "time-shuttle": 0,
         });
       }
       if (Array.isArray(parsed.manuallyUnlockedResources)) {
@@ -1268,6 +1310,11 @@ export default function Home() {
         setResearchIdCounter(parsed.researchIdCounter);
       } else {
         setResearchIdCounter(0);
+      }
+      if (typeof parsed.hybridRiceFields === "number") {
+        setHybridRiceFields(parsed.hybridRiceFields);
+      } else {
+        setHybridRiceFields(0);
       }
       setCurrentSaveName(saveName);
       
@@ -1337,18 +1384,26 @@ export default function Home() {
         }
         if (Array.isArray(parsed.resources)) {
           setResources(
-            INITIAL_RESOURCES.map((resource) => {
-              const incoming = parsed.resources.find((item: Resource) => item?.key === resource.key);
-              if (!incoming) {
-                return resource;
+            parsed.resources.map((incoming: Resource) => {
+              if (incoming.key === "rice" || incoming.key === "time-shuttle") {
+                return {
+                  ...incoming,
+                  amount: typeof incoming.amount === "number" ? incoming.amount : 0,
+                  rate: typeof incoming.rate === "number" ? incoming.rate : 0,
+                  capacity: typeof incoming.capacity === "number" ? incoming.capacity : 0,
+                };
+              }
+              const existing = INITIAL_RESOURCES.find((resource) => resource.key === incoming.key);
+              if (!existing) {
+                return null; 
               }
               return {
-                ...resource,
-                amount: typeof incoming.amount === "number" ? incoming.amount : resource.amount,
-                rate: typeof incoming.rate === "number" ? incoming.rate : resource.rate,
-                capacity: typeof incoming.capacity === "number" ? incoming.capacity : resource.capacity,
+                ...existing,
+                amount: typeof incoming.amount === "number" ? incoming.amount : existing.amount,
+                rate: typeof incoming.rate === "number" ? incoming.rate : existing.rate,
+                capacity: typeof incoming.capacity === "number" ? incoming.capacity : existing.capacity,
               };
-            }),
+            }).filter(Boolean) as Resource[]
           );
         } else {
           setResources(INITIAL_RESOURCES);
@@ -1437,6 +1492,7 @@ export default function Home() {
             energy: typeof parsed.resourceWorkers.energy === "number" ? parsed.resourceWorkers.energy : 0,
             execution: typeof parsed.resourceWorkers.execution === "number" ? parsed.resourceWorkers.execution : 0,
             rice: typeof parsed.resourceWorkers.rice === "number" ? parsed.resourceWorkers.rice : 0,
+            "time-shuttle": typeof parsed.resourceWorkers["time-shuttle"] === "number" ? parsed.resourceWorkers["time-shuttle"] : 0,
           });
         } else {
           setResourceWorkers({
@@ -1447,10 +1503,16 @@ export default function Home() {
             energy: 0,
             execution: 0,
             rice: 0,
+            "time-shuttle": 0,
           });
         }
         if (Array.isArray(parsed.manuallyUnlockedResources)) {
           setManuallyUnlockedResources(parsed.manuallyUnlockedResources);
+        }
+        if (typeof parsed.hybridRiceFields === "number") {
+          setHybridRiceFields(parsed.hybridRiceFields);
+        } else {
+          setHybridRiceFields(0);
         }
       } catch (error) {
         console.error(error);
@@ -2070,6 +2132,7 @@ export default function Home() {
         energy: "",
         execution: "",
         rice: "plow",
+        "time-shuttle": "",
       };
       const toolType = toolTypeMap[resourceKey];
       if (!toolType) {
@@ -2123,6 +2186,20 @@ export default function Home() {
       if (!baseReward) {
         return;
       }
+
+      // 特殊处理 time-shuttle：需要消耗 10 个余烬
+      if (resourceKey === "time-shuttle") {
+        const energyResource = resources.find((r) => r.key === "energy");
+        if (!energyResource || energyResource.amount < 10) {
+          return;
+        }
+        setResources((prev) =>
+          prev.map((r) =>
+            r.key === "energy" ? { ...r, amount: r.amount - 10 } : r
+          )
+        );
+      }
+
       const { bonus, cooldownReduction } = getEquippedToolBonus(resourceKey);
       const boostedReward: ResourceDelta = {};
       Object.keys(baseReward).forEach((key) => {
@@ -2130,7 +2207,8 @@ export default function Home() {
         boostedReward[rKey] = (baseReward[rKey] || 0) + bonus;
       });
       setResources((prev) => applyResourceDelta(prev, boostedReward));
-      const adjustedCooldown = Math.max(5, MANUAL_HARVEST_COOLDOWN_SECONDS - cooldownReduction);
+      const baseCooldown = resourceKey === "time-shuttle" ? 120 : MANUAL_HARVEST_COOLDOWN_SECONDS;
+      const adjustedCooldown = Math.max(5, baseCooldown - cooldownReduction);
       setManualCooldowns((prev) => ({ ...prev, [resourceKey]: adjustedCooldown }));
       setManualHarvestActive((prev) => ({ ...prev, [resourceKey]: true }));
 
@@ -2573,6 +2651,21 @@ export default function Home() {
 
         if (undiscovered.length > 0) {
           const discovered = undiscovered[Math.floor(Math.random() * undiscovered.length)];
+
+          // 检查条件
+          if (discovered.id === "time-shuttle") {
+            const miningSkill = skills.find((s) => s.type === "mining");
+            if (!miningSkill || miningSkill.level < 10) {
+              // 不允许发现
+              const entry =
+                language === "zh"
+                  ? `研究成功，但未能取得突破。`
+                  : `Research succeeded, but no new discoveries.`;
+              setLog((prev) => [entry, ...prev].slice(0, 6));
+              return;
+            }
+          }
+
           setDiscoveredKnowledge((prev) => [...prev, discovered.id]);
 
           // 解锁对应的内容
@@ -2591,6 +2684,29 @@ export default function Home() {
                     rate: 0,
                     capacity: 30,
                     icon: Wheat,
+                  },
+                ];
+              }
+              return prev;
+            });
+          } else if (discovered.unlocks === "hybrid-rice-field") {
+            // 解锁杂交水稻田
+            setHybridRiceFields(1);
+          } else if (discovered.unlocks === "time-shuttle-resource") {
+            // 添加天梭资源
+            setResources((prev) => {
+              const hasTimeShuttle = prev.some((r) => r.key === "time-shuttle");
+              if (!hasTimeShuttle) {
+                return [
+                  ...prev,
+                  {
+                    key: "time-shuttle" as ResourceKey,
+                    label: "Time Shuttle",
+                    labelZh: "天梭",
+                    amount: 0,
+                    rate: 0,
+                    capacity: 5,
+                    icon: Clock,
                   },
                 ];
               }
@@ -2618,7 +2734,7 @@ export default function Home() {
         setLog((prev) => [entry, ...prev].slice(0, 6));
       }
     },
-    [researchProjects, discoveredKnowledge, language]
+    [researchProjects, discoveredKnowledge, skills, language]
   );
 
   // 研究项目倒计时
@@ -2726,6 +2842,9 @@ export default function Home() {
         if (resource.key === "sunleaf") {
           const seasonMultiplier = SUNLEAF_SEASON_MULTIPLIERS[seasonIndex] || 1;
           totalRate *= seasonMultiplier;
+        }
+        if (resource.key === "rice") {
+          totalRate += hybridRiceFields * 0.3;
         }
         if (totalRate <= 0) {
           return resource;
@@ -2990,8 +3109,8 @@ export default function Home() {
     setCompletedPurchases([]);
     setPurchaseCounts({});
     setCivilizationLevel(0);
-    setManualCooldowns({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0 });
-    setManualHarvestActive({ sunleaf: false, wood: false, stone: false, science: false, energy: false, execution: false, rice: false });
+    setManualCooldowns({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0, "time-shuttle": 0 });
+    setManualHarvestActive({ sunleaf: false, wood: false, stone: false, science: false, energy: false, execution: false, rice: false, "time-shuttle": false });
     setLog(localizedDefaults);
     setDistricts(DISTRICTS);
     setCraftingRecipe(null);
@@ -3007,11 +3126,12 @@ export default function Home() {
     setAutoPayWages(false);
     setLastPayDay(0);
     setSkills(INITIAL_SKILLS);
-    setResourceWorkers({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0 });
+    setResourceWorkers({ sunleaf: 0, wood: 0, stone: 0, science: 0, energy: 0, execution: 0, rice: 0, "time-shuttle": 0 });
     setManuallyUnlockedResources([]);
     setResearchProjects([]);
     setDiscoveredKnowledge([]);
     setResearchIdCounter(0);
+    setHybridRiceFields(0);
     setCurrentSaveName(newGameName.trim());
     saveGame(newGameName.trim());
     setGameState('playing');
