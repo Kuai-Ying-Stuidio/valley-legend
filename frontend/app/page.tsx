@@ -2988,15 +2988,18 @@ export default function Home() {
     let elapsedTime = 0;
     const id = window.setInterval(() => {
       elapsedTime += 1;
+      // 确保craftingProgress不会超过设定的制作时间
+      const limitedElapsedTime = Math.min(elapsedTime, activeRecipe.craftTime);
       const progress = Math.min((elapsedTime / activeRecipe.craftTime) * 100, 100);
-      setCraftingProgress(progress);
+      setCraftingProgress(limitedElapsedTime); // 直接使用秒数作为craftingProgress
 
       if (elapsedTime >= activeRecipe.craftTime) {
+        clearInterval(id); // 清除计时器
         if (recipe) {
           setPendingAllocation({ recipeId: craftingRecipe, boost: recipe.capacityBoost });
         } else if (toolRecipe) {
           setEquippedTools((prevTools) => ({ ...prevTools, [toolRecipe.toolType]: toolRecipe.id }));
-          const entry =
+          const entry = 
             language === "zh"
               ? `「${toolRecipe.nameZh}」制作完成，已装备。`
               : `"${toolRecipe.name}" crafting complete; equipped.`;
@@ -4578,12 +4581,12 @@ export default function Home() {
                         </div>
                       </div>
                       {isCrafting ? (
-                        <div className="mt-3 space-y-1.5">
-                          <Progress value={progress} />
-                          <p className="text-xs text-muted-foreground">
-                            {craftingProgress}s / {recipe.craftTime}s
-                          </p>
-                        </div>
+                          <div className="mt-3 space-y-1.5">
+                            <Progress value={(craftingProgress / recipe.craftTime) * 100} />
+                            <p className="text-xs text-muted-foreground">
+                              {craftingProgress}s / {recipe.craftTime}s
+                            </p>
+                          </div>
                       ) : (
                         <div className="mt-3 flex justify-end">
                           <Button
@@ -4730,7 +4733,7 @@ export default function Home() {
                         </div>
                         {isCrafting ? (
                           <div className="mt-3 space-y-1.5">
-                            <Progress value={progress} />
+                            <Progress value={(craftingProgress / tool.craftTime) * 100} />
                             <p className="text-xs text-muted-foreground">
                               {craftingProgress}s / {tool.craftTime}s
                             </p>
